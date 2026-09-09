@@ -426,15 +426,15 @@ def test_page_shows_assignments_overdue_by_more_than_three_days():
     assert "13 days overdue" in body
 
 
-def test_points_reward_early_and_penalise_late():
+def test_xp_rewards_early_and_penalises_late():
     at = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
-    assert web.points_for(at, None) == 0, "nothing is scored until it is done"
-    assert web.points_for(at, at - timedelta(hours=2)) == 10, "same day, on time"
-    assert web.points_for(at, at - timedelta(days=3)) == 16, "10 + 3 days x 2"
-    assert web.points_for(at, at - timedelta(days=90)) == 50, "early bonus caps at +40"
-    assert web.points_for(at, at + timedelta(minutes=1)) == -5, "any lateness costs a day"
-    assert web.points_for(at, at + timedelta(days=3)) == -15
-    assert web.points_for(at, at + timedelta(days=99)) == -30, "late penalty has a floor"
+    assert web.xp_for(at, None) == 0, "nothing is scored until it is done"
+    assert web.xp_for(at, at - timedelta(hours=2)) == 10, "same day, on time"
+    assert web.xp_for(at, at - timedelta(days=3)) == 16, "10 + 3 days x 2"
+    assert web.xp_for(at, at - timedelta(days=90)) == 50, "early bonus caps at +40"
+    assert web.xp_for(at, at + timedelta(minutes=1)) == -5, "any lateness costs a day"
+    assert web.xp_for(at, at + timedelta(days=3)) == -15
+    assert web.xp_for(at, at + timedelta(days=99)) == -30, "late penalty has a floor"
 
 
 def test_preexisting_backlog_is_never_scored():
@@ -443,22 +443,27 @@ def test_preexisting_backlog_is_never_scored():
     at = datetime(2026, 8, 27, 23, 59, tzinfo=TZ)
     first_seen = datetime(2026, 9, 9, 4, 48, tzinfo=TZ)   # tracking began later
     done_now = datetime(2026, 9, 9, 12, 0, tzinfo=TZ)
-    assert web.points_for(at, done_now, first_seen) == 0, "backlog is unscored"
-    assert web.points_for(at, done_now) == -30, "without first_seen it still penalises"
+    assert web.xp_for(at, done_now, first_seen) == 0, "backlog is unscored"
+    assert web.xp_for(at, done_now) == -30, "without first_seen it still penalises"
     # An assignment seen BEFORE its deadline scores normally.
     later = datetime(2026, 9, 20, 23, 59, tzinfo=TZ)
-    assert web.points_for(later, later - timedelta(days=2), first_seen) == 14
+    assert web.xp_for(later, later - timedelta(days=2), first_seen) == 14
 
 
-def test_rank_thresholds():
-    assert web.rank_for(0)[0] == "Freshman"
-    assert web.rank_for(-40)[0] == "Freshman", "a negative score cannot rank below the floor"
-    assert web.rank_for(99)[0] == "Freshman"
-    assert web.rank_for(100)[0] == "Sophomore"
-    assert web.rank_for(1000)[:2] == ("Dean's List", None), "top rank has nothing after it"
-    name, nxt, to_next, pct = web.rank_for(175)
-    assert (name, nxt, to_next) == ("Sophomore", "Junior", 75)
-    assert pct == 50, "175 is halfway from 100 to 250"
+def test_rank_tiers():
+    assert web.rank_for(0)["name"] == "Iron"
+    assert web.rank_for(-40)["name"] == "Iron", "a negative total cannot rank below the floor"
+    assert web.rank_for(-40)["pct"] == 0, "and shows no progress rather than negative"
+    assert web.rank_for(74)["name"] == "Iron"
+    assert web.rank_for(75)["name"] == "Bronze"
+    top = web.rank_for(1300)
+    assert (top["name"], top["next_name"], top["pct"]) == ("Radiant", None, 100)
+    r = web.rank_for(125)
+    assert (r["name"], r["next_name"], r["to_next"]) == ("Bronze", "Silver", 50)
+    assert r["pct"] == 50, "125 is halfway from 75 to 175"
+    assert [web.rank_for(t)["chevrons"] for t in (0, 300, 825)] == [1, 2, 3], \
+        "chevrons step up every three tiers"
+    assert all(len(r) == 3 for r in web.RANKS), "every tier carries a threshold, name and colour"
 
 
 def test_donut_segments_cover_the_circle_with_gaps():

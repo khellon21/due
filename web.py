@@ -18,15 +18,26 @@ app = Flask(__name__)
 SHIFT = re.compile(r"([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d")
 SOON_DAYS = 7
 
-# Scoring. Finish early, gain; finish late, lose.
-BASE_POINTS = 10          # for handing anything in on time
+# XP. Finish early, gain; finish late, lose.
+BASE_XP = 10              # for handing anything in on time
 PER_DAY_EARLY = 2         # each full day of head start
 EARLY_CAP = 40            # most you can earn from being early
 PER_DAY_LATE = 5          # lost per day late
 LATE_FLOOR = -30          # worst a single assignment can cost you
 
-RANKS = [(0, "Freshman"), (100, "Sophomore"), (250, "Junior"),
-         (450, "Senior"), (700, "Honor Roll"), (1000, "Dean's List")]
+# (xp threshold, name, badge colour). Nine tiers over a ~2400 XP semester
+# ceiling, so Radiant means finishing nearly everything well ahead of time.
+RANKS = [
+    (0,    "Iron",      "#6e6e73"),
+    (75,   "Bronze",    "#a1642a"),
+    (175,  "Silver",    "#9aa4ae"),
+    (300,  "Gold",      "#e0a10f"),
+    (450,  "Platinum",  "#3fbfb0"),
+    (625,  "Diamond",   "#5b9cf8"),
+    (825,  "Ascendant", "#2fbf71"),
+    (1050, "Immortal",  "#d0416b"),
+    (1300, "Radiant",   "#e8c96a"),
+]
 
 # Validated with the dataviz palette validator, both modes, all checks pass.
 DONE_COLOR, UPCOMING_COLOR, OVERDUE_COLOR = "#0ca30c", "#2a78d6", "#d03b3b"
@@ -88,8 +99,8 @@ def countdown(due_dt, now):
     return f"{span} overdue" if late else f"in {span}"
 
 
-def points_for(due_dt, done_at, first_seen=None):
-    """Points for one assignment. Nothing is scored until it is done.
+def xp_for(due_dt, done_at, first_seen=None):
+    """XP for one assignment. Nothing is scored until it is done.
 
     An assignment that was ALREADY overdue when the notifier first saw it is
     never scored, in either direction: the system was not watching it, so
@@ -102,22 +113,27 @@ def points_for(due_dt, done_at, first_seen=None):
         return 0
     days = (due_dt - done_at).total_seconds() / 86400
     if days >= 0:
-        return BASE_POINTS + min(int(days) * PER_DAY_EARLY, EARLY_CAP)
+        return BASE_XP + min(int(days) * PER_DAY_EARLY, EARLY_CAP)
     return max(-PER_DAY_LATE * math.ceil(-days), LATE_FLOOR)
 
 
-def rank_for(points):
-    """(current rank, next rank or None, points still needed, % toward next)."""
-    earned = [r for r in RANKS if points >= r[0]]
-    floor, name = earned[-1] if earned else RANKS[0]
-    # Ranks above the CURRENT floor, not above the score: a negative score sits
+def rank_for(xp):
+    """The tier this XP total sits in, and how far it is to the next one."""
+    earned = [r for r in RANKS if xp >= r[0]]
+    floor, name, color = earned[-1] if earned else RANKS[0]
+    tier = RANKS.index((floor, name, color))
+    # Tiers above the CURRENT floor, not above the score: a negative total sits
     # below the first threshold, and comparing against it gives a zero-width span.
     later = [r for r in RANKS if r[0] > floor]
+    rank = {"name": name, "color": color, "tier": tier,
+            "chevrons": 1 + tier // 3}
     if not later:
-        return name, None, 0, 100
-    ceiling, next_name = later[0]
-    pct = max(0, round(100 * (points - floor) / (ceiling - floor)))
-    return name, next_name, ceiling - points, pct
+        rank.update(next_name=None, next_color=None, to_next=0, pct=100)
+        return rank
+    ceiling, next_name, next_color = later[0]
+    rank.update(next_name=next_name, next_color=next_color, to_next=ceiling - xp,
+                pct=max(0, round(100 * (xp - floor) / (ceiling - floor))))
+    return rank
 
 
 def _donut(done_n, upcoming_n, overdue_n):
@@ -159,20 +175,20 @@ def index(token):
     # notifying until it is marked done, so hiding the old ones left them
     # nagging with no way to switch them off.
     overdue, soon, later, done = [], [], [], []
-    points = 0
+    xp = 0
     for r in db.execute("SELECT * FROM assignments WHERE active=1 ORDER BY due"):
         at = datetime.fromisoformat(r["due"])
         finished = datetime.fromisoformat(r["done_at"]) if r["done_at"] else None
         seen = datetime.fromisoformat(r["first_seen"]) if r["first_seen"] else None
         backlog = seen is not None and at < seen
-        scored = points_for(at, finished, seen)
-        points += scored
+        scored = xp_for(at, finished, seen)
+        xp += scored
         item = {
             "uid": r["uid"], "title": r["title"],
             "when": due.format_when(at),
             "countdown": countdown(at, now),
             "urgent": at - now < timedelta(days=1),
-            "points": scored, "backlog": backlog,
+            "xp": scored, "backlog": backlog,
         }
         if finished is not None:
             done.append(item)
@@ -185,7 +201,7 @@ def index(token):
     done.reverse()
 
     total = len(overdue) + len(soon) + len(later) + len(done)
-    rank, next_rank, to_next, rank_pct = rank_for(points)
+    rank = rank_for(xp)
     schedule = cfg["work_schedule"]
     days = []
     for d in due.DAY_NAMES:
@@ -201,8 +217,7 @@ def index(token):
         percent=round(100 * len(done) / total) if total else 0,
         segments=_donut(len(done), len(soon) + len(later), len(overdue)),
         circumference=f"{CIRCUMFERENCE:.2f}", radius=RADIUS,
-        points=points, rank=rank, next_rank=next_rank,
-        to_next=to_next, rank_pct=rank_pct, ranks=RANKS,
+        xp=xp, rank=rank, ranks=RANKS,
         next_up=(soon or later or [None])[0],
         days=days, raw_schedule=json.dumps(schedule, indent=2))
 
@@ -264,7 +279,7 @@ PAGE = """<!doctype html>
 
  .top{display:flex;gap:1.1rem;align-items:center}
  .donut{flex:0 0 128px}
- svg{display:block;transform:rotate(-90deg)}
+ .donut svg{display:block;transform:rotate(-90deg)}
  .hub{font:600 1.5rem/1 -apple-system,system-ui;fill:var(--ink)}
  .hubsub{font:400 .58rem/1 -apple-system,system-ui;fill:var(--dim);letter-spacing:.09em}
  .key{flex:1;min-width:0;display:grid;gap:.45rem}
@@ -274,10 +289,15 @@ PAGE = """<!doctype html>
  .key s{color:var(--dim);text-decoration:none;font-size:.8rem;
         font-variant-numeric:tabular-nums;min-width:2.4rem;text-align:right}
 
- .score{display:flex;align-items:baseline;gap:.55rem;margin-bottom:.15rem}
- .score .n{font-size:1.9rem;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
- .score .r{font-weight:600}
- .score .p{color:var(--dim);font-size:.85rem;margin-left:auto}
+ .score{display:flex;align-items:center;gap:.85rem;margin-bottom:.15rem}
+ .badge{flex:none;display:block}
+ .who{flex:1;min-width:0}
+ .who .rk{display:block;font-size:1.45rem;font-weight:700;letter-spacing:.01em;line-height:1.1}
+ .who .xp{display:block;color:var(--dim);font-size:.9rem;font-weight:600;
+          font-variant-numeric:tabular-nums;letter-spacing:.02em}
+ .nxt{display:flex;align-items:center;gap:.4rem;color:var(--dim);
+      font-size:.72rem;line-height:1.25;text-align:right;flex:none}
+ .nxt span{font-variant-numeric:tabular-nums}
  .bar{height:.45rem;border-radius:.3rem;background:var(--track);overflow:hidden;margin:.6rem 0 .35rem}
  .bar i{display:block;height:100%;background:var(--up);border-radius:.3rem}
  .foot{color:var(--dim);font-size:.8rem}
@@ -358,15 +378,39 @@ PAGE = """<!doctype html>
   </div>
 </div>
 
+{% macro badge(color, chevrons, size) %}
+<svg class="badge" width="{{ size }}" height="{{ (size * 1.1)|round|int }}"
+     viewBox="0 0 48 53" aria-hidden="true">
+  <polygon points="24,1 45,13 45,38 24,51 3,38 3,13" fill="{{ color }}"
+           fill-opacity="0.14" stroke="{{ color }}" stroke-width="2"
+           stroke-linejoin="round"></polygon>
+  <polygon points="24,13 34,19 34,31 24,37 14,31 14,19" fill="{{ color }}"></polygon>
+  <polygon points="24,17 30,20.5 30,27.5 24,31 18,27.5 18,20.5"
+           fill="#fff" fill-opacity="0.28"></polygon>
+  {% for n in range(chevrons) %}
+  <path d="M17 {{ 41 + n * 3.4 }} l7 -3 l7 3" fill="none" stroke="{{ color }}"
+        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+        opacity="{{ 1 - n * 0.22 }}"></path>
+  {% endfor %}
+</svg>
+{% endmacro %}
+
 <div class=panel>
   <div class=score>
-    <span class=n>{{ points }}</span>
-    <span class=r>{{ rank }}</span>
-    {% if next_rank %}<span class=p>{{ to_next }} to {{ next_rank }}</span>
-    {% else %}<span class=p>top rank</span>{% endif %}
+    {{ badge(rank.color, rank.chevrons, 62) }}
+    <div class=who>
+      <span class="rk" style="color:{{ rank.color }}">{{ rank.name }}</span>
+      <span class=xp>{{ xp }} XP</span>
+    </div>
+    {% if rank.next_name %}
+    <div class=nxt>
+      {{ badge(rank.next_color, rank.chevrons if rank.tier % 3 < 2 else rank.chevrons + 1, 30) }}
+      <span>{{ rank.to_next }} XP<br>to {{ rank.next_name }}</span>
+    </div>
+    {% endif %}
   </div>
-  <div class=bar><i style="width:{{ rank_pct }}%"></i></div>
-  <div class=foot>Early: +{{ 10 }} on time, +2 per day ahead &middot; Late: &minus;5 per day</div>
+  <div class=bar><i style="width:{{ rank.pct }}%;background:{{ rank.color }}"></i></div>
+  <div class=foot>Early: +10 on time, +2 per day ahead &middot; Late: &minus;5 per day</div>
 </div>
 
 {% macro row(i, kind) %}
@@ -377,7 +421,7 @@ PAGE = """<!doctype html>
     </span>
     {% if kind == 'off' %}
       {% if i.backlog %}<span class="pts zero" title="already overdue when tracking started">&mdash;</span>
-      {% else %}<span class="pts {{ 'neg' if i.points < 0 }}">{{ '+' if i.points > 0 }}{{ i.points }}</span>{% endif %}
+      {% else %}<span class="pts {{ 'neg' if i.xp < 0 }}">{{ '+' if i.xp > 0 }}{{ i.xp }} XP</span>{% endif %}
     {% endif %}
     <form method=post action="/t/{{ token }}/{{ 'undone' if kind == 'off' else 'done' }}/{{ i.uid }}">
       <button>{{ 'Undo' if kind == 'off' else 'Done' }}</button>
