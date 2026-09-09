@@ -290,7 +290,34 @@ PAGE = """<!doctype html>
         font-variant-numeric:tabular-nums;min-width:2.4rem;text-align:right}
 
  .score{display:flex;align-items:center;gap:.85rem;margin-bottom:.15rem}
- .badge{flex:none;display:block}
+ .badge{flex:none;display:block;overflow:visible;
+        animation:glow var(--d) ease-in-out infinite}
+ .badge .shine{fill:#fff;opacity:0;animation:shine var(--s) linear infinite}
+ .badge .ring{transform-box:view-box;transform-origin:50% 49%;
+              animation:spin var(--r) linear infinite}
+ @keyframes glow{0%,100%{filter:drop-shadow(0 0 calc(var(--g) * .3) var(--c))}
+                 50%{filter:drop-shadow(0 0 var(--g) var(--c))}}
+ @keyframes shine{0%{opacity:0;transform:translateX(0)}
+                  10%,32%{opacity:.5}
+                  42%,100%{opacity:0;transform:translateX(74px)}}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ @keyframes hue{to{filter:hue-rotate(360deg)}}
+ /* one look per tier: dead metal at the bottom, everything at the top */
+ .t0{--g:0px;--d:6s;--s:0s;--r:0s}      .t1{--g:4px;--d:5s;--s:0s;--r:0s}
+ .t2{--g:5px;--d:4.4s;--s:6s;--r:0s}    .t3{--g:7px;--d:3.8s;--s:4.5s;--r:0s}
+ .t4{--g:8px;--d:3.4s;--s:3.6s;--r:0s}  .t5{--g:9px;--d:3s;--s:2.8s;--r:0s}
+ .t6{--g:10px;--d:2.6s;--s:2.6s;--r:14s}.t7{--g:12px;--d:2.2s;--s:2.2s;--r:9s}
+ .t8{--g:15px;--d:1.8s;--s:1.7s;--r:6s}
+ .t8 .core{animation:hue 5s linear infinite}
+ @media (prefers-reduced-motion:reduce){.badge,.badge *{animation:none}}
+
+ .ladder{display:grid;gap:.15rem}
+ .lad{display:flex;align-items:center;gap:.6rem;padding:.3rem .35rem;
+      border-radius:.5rem;font-size:.88rem}
+ .lad.now{background:var(--bg);outline:1px solid var(--line)}
+ .lad b{font-weight:600}
+ .lad s{margin-left:auto;color:var(--dim);text-decoration:none;font-size:.78rem;
+        font-variant-numeric:tabular-nums}
  .who{flex:1;min-width:0}
  .who .rk{display:block;font-size:1.45rem;font-weight:700;letter-spacing:.01em;line-height:1.1}
  .who .xp{display:block;color:var(--dim);font-size:.9rem;font-weight:600;
@@ -346,6 +373,10 @@ PAGE = """<!doctype html>
  .clear b{display:block;font-size:1.1rem;color:var(--ink);margin-bottom:.3rem}
 </style>
 
+<svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs>
+  <clipPath id="hx"><polygon points="24,1 45,13 45,38 24,51 3,38 3,13"></polygon></clipPath>
+</defs></svg>
+
 <h1>Assignments</h1>
 {% if error %}<p class=err>{{ error }}</p>{% endif %}
 
@@ -378,13 +409,13 @@ PAGE = """<!doctype html>
   </div>
 </div>
 
-{% macro badge(color, chevrons, size) %}
-<svg class="badge" width="{{ size }}" height="{{ (size * 1.1)|round|int }}"
-     viewBox="0 0 48 53" aria-hidden="true">
+{% macro badge(color, chevrons, size, tier) %}
+<svg class="badge t{{ tier }}" width="{{ size }}" height="{{ (size * 1.1)|round|int }}"
+     viewBox="0 0 48 53" style="--c:{{ color }}" aria-hidden="true">
   <polygon points="24,1 45,13 45,38 24,51 3,38 3,13" fill="{{ color }}"
            fill-opacity="0.14" stroke="{{ color }}" stroke-width="2"
            stroke-linejoin="round"></polygon>
-  <polygon points="24,13 34,19 34,31 24,37 14,31 14,19" fill="{{ color }}"></polygon>
+  <polygon class="core" points="24,13 34,19 34,31 24,37 14,31 14,19" fill="{{ color }}"></polygon>
   <polygon points="24,17 30,20.5 30,27.5 24,31 18,27.5 18,20.5"
            fill="#fff" fill-opacity="0.28"></polygon>
   {% for n in range(chevrons) %}
@@ -392,25 +423,45 @@ PAGE = """<!doctype html>
         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
         opacity="{{ 1 - n * 0.22 }}"></path>
   {% endfor %}
+  {% if tier >= 6 %}
+  <circle class="ring" cx="24" cy="26" r="23.5" fill="none" stroke="{{ color }}"
+          stroke-width="1.2" stroke-dasharray="2 6" opacity="0.75"></circle>
+  {% endif %}
+  <g clip-path="url(#hx)">
+    <polygon class="shine" points="-17,-4 -7,-4 -13,57 -23,57"></polygon>
+  </g>
 </svg>
 {% endmacro %}
 
 <div class=panel>
   <div class=score>
-    {{ badge(rank.color, rank.chevrons, 62) }}
+    {{ badge(rank.color, rank.chevrons, 62, rank.tier) }}
     <div class=who>
       <span class="rk" style="color:{{ rank.color }}">{{ rank.name }}</span>
       <span class=xp>{{ xp }} XP</span>
     </div>
     {% if rank.next_name %}
     <div class=nxt>
-      {{ badge(rank.next_color, rank.chevrons if rank.tier % 3 < 2 else rank.chevrons + 1, 30) }}
+      {{ badge(rank.next_color, rank.chevrons if rank.tier % 3 < 2 else rank.chevrons + 1, 30,
+                rank.tier + 1) }}
       <span>{{ rank.to_next }} XP<br>to {{ rank.next_name }}</span>
     </div>
     {% endif %}
   </div>
   <div class=bar><i style="width:{{ rank.pct }}%;background:{{ rank.color }}"></i></div>
   <div class=foot>Early: +10 on time, +2 per day ahead &middot; Late: &minus;5 per day</div>
+  <details>
+    <summary>All ranks</summary>
+    <div class=ladder>
+      {% for floor, name, color in ranks %}
+      <div class="lad {{ 'now' if loop.index0 == rank.tier }}">
+        {{ badge(color, 1 + loop.index0 // 3, 34, loop.index0) }}
+        <b style="color:{{ color }}">{{ name }}</b>
+        <s>{{ floor }}{{ '+' if loop.last else '–' ~ (ranks[loop.index][0] - 1) }} XP</s>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
 </div>
 
 {% macro row(i, kind) %}
