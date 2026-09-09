@@ -47,11 +47,24 @@ def test_fetch_ics_uses_cache_when_fresh():
     # every real assignment.
     scratch = due.HERE / "test-cache.ics"
     scratch.write_bytes(FIXTURE)
+    attempts = []
+
+    def spy(*args, **kwargs):
+        attempts.append(args)
+        raise OSError("network unreachable")
+
+    real_urlopen = due.urllib.request.urlopen
+    due.urllib.request.urlopen = spy
     try:
-        cfg = {"ics_url": "http://127.0.0.1:1/never-reachable"}
-        got = due.fetch_ics(cfg, max_age=3600, cache=scratch)
-        assert got == FIXTURE, "fresh cache must not hit the network"
+        cfg = {"ics_url": "http://example.invalid/feed.ics"}
+        assert due.fetch_ics(cfg, max_age=3600, cache=scratch) == FIXTURE
+        assert attempts == [], "a fresh cache must not touch the network at all"
+        # Aged out: the refresh must be attempted, and its failure must fall
+        # back to the stale copy rather than silencing the notifier.
+        assert due.fetch_ics(cfg, max_age=0, cache=scratch) == FIXTURE
+        assert len(attempts) == 1, "a stale cache must attempt a refresh"
     finally:
+        due.urllib.request.urlopen = real_urlopen
         scratch.unlink()
 
 
