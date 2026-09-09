@@ -1,4 +1,6 @@
 """Self-check for due.py.  Run: python test_due.py"""
+import contextlib
+import io
 import sys
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -332,6 +334,35 @@ def test_tick_does_not_record_a_failed_send():
     # The next tick retries it.
     sent = []
     assert due.tick(_cfg(), db, at + timedelta(minutes=5), sent.append) == [("u1", due.HEADS_UP)]
+
+
+def test_quiet_hours_do_not_consume_the_repeat_slot():
+    db, sent = _armed(), []
+    t = DUE - timedelta(minutes=30)
+    assert due.tick(_cfg(), db, t, sent.append) == [("u1", due.REPEAT)]
+    stamp = db.execute("SELECT last_repeat_at FROM assignments WHERE uid='u1'").fetchone()[0]
+    assert due.tick(_cfg(), db, DUE + timedelta(hours=3), sent.append) == [], "quiet hours send nothing"
+    after = db.execute("SELECT last_repeat_at FROM assignments WHERE uid='u1'").fetchone()[0]
+    assert after == stamp, "a suppressed repeat must not reset the pacing timer"
+
+
+def test_tick_survives_a_feed_refresh_failure():
+    db, sent = _armed(), []
+    real_connect, real_fetch = due.connect, due.fetch_ics
+
+    def boom(*args, **kwargs):
+        raise OSError("feed unreachable")
+
+    due.connect = lambda *a, **k: db
+    due.fetch_ics = boom
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            fired = due.tick(_cfg(), None, datetime(2026, 9, 9, 20, 0, tzinfo=TZ), sent.append)
+    finally:
+        due.connect, due.fetch_ics = real_connect, real_fetch
+    assert fired == [("u1", due.HEADS_UP)], "a dead feed must not stop notifications"
+    assert "feed refresh failed" in stderr.getvalue(), "and it must say so on stderr"
 
 
 def main():
