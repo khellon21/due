@@ -243,6 +243,42 @@ def test_done_url():
         "http://1.2.3.4:8080/t/abc123/done/_bb.GradableItem-_1436930_1"
 
 
+def test_send_folds_the_headline_and_builds_the_done_action():
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return b""
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+
+    def spy(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
+        captured["body"] = req.data
+        return FakeResponse()
+
+    real_urlopen = due.urllib.request.urlopen
+    due.urllib.request.urlopen = spy
+    try:
+        cfg = {"ntfy_server": "https://ntfy.sh/", "ntfy_topic": "secret-topic"}
+        body = "Thu Sep 10, 11:59 PM — don't forget"
+        due.send(cfg, "1 hour left: Chapter 2’s Quiz – Unit 1", body, 5,
+                 "warning", action_url="http://1.2.3.4:8080/t/tok/done/u1")
+    finally:
+        due.urllib.request.urlopen = real_urlopen
+
+    assert captured["url"] == "https://ntfy.sh/secret-topic", "trailing slash is stripped"
+    assert captured["headers"]["title"] == "1 hour left: Chapter 2?s Quiz ? Unit 1"
+    assert captured["headers"]["priority"] == "5"
+    assert captured["headers"]["tags"] == "warning"
+    assert captured["headers"]["actions"] == (
+        "http, Done, http://1.2.3.4:8080/t/tok/done/u1, method=POST, clear=true")
+    assert captured["body"] == body.encode("utf-8"), "the body must keep full UTF-8"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
