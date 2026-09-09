@@ -371,7 +371,7 @@ This is the heart of the system. Every notification time comes from these three 
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `test_due.py` (extend the datetime import to include `timedelta` and `time`):
+Add to `test_due.py` (extend the datetime import to include `timedelta`):
 
 ```python
 DUE = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)  # Thursday, a real feed item
@@ -437,7 +437,11 @@ Expected: FAIL — `AttributeError: module 'due' has no attribute 'heads_up_at'`
 
 - [ ] **Step 3: Write minimal implementation**
 
-Add to `due.py` (extend the datetime import to `from datetime import datetime, date, time, timedelta`):
+Add to `due.py` (extend the datetime import to `from datetime import datetime, timedelta`).
+Do NOT import `time` from `datetime`: `due.py` already imports the stdlib `time`
+module for `fetch_ics`, and `from datetime import time` would shadow it, breaking
+`time.time()` with `AttributeError: type object 'datetime.time' has no attribute
+'time'`. The heads-up datetime is built directly instead, which needs no `time`:
 
 ```python
 HEADS_UP = "HEADS_UP"
@@ -458,10 +462,11 @@ def heads_up_at(due_dt, work_schedule, today, hour):
     day = due_dt.date() - timedelta(days=1)
     while day >= today:
         if not is_work_day(day, work_schedule):
-            return datetime.combine(day, time(hour), tzinfo=due_dt.tzinfo)
+            return datetime(day.year, day.month, day.day, hour, tzinfo=due_dt.tzinfo)
         day -= timedelta(days=1)
     fallback = due_dt.date() - timedelta(days=1)
-    return datetime.combine(fallback, time(hour), tzinfo=due_dt.tzinfo)
+    return datetime(fallback.year, fallback.month, fallback.day, hour,
+                    tzinfo=due_dt.tzinfo)
 
 
 def current_stage(now, due_dt, heads_up, escalation_hours=(5, 2, 1), repeat_minutes=30):
