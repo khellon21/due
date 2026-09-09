@@ -39,6 +39,60 @@ RANKS = [
     (1300, "Radiant",   "#e8c96a"),
 ]
 
+ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"]
+
+# What each tier's badge is made of. The ladder is meant to be read at a
+# glance from across the room, so every rung adds a layer the one below it
+# does not have: a spike burst, then a ribbon, then a laurel wreath, then a
+# crown -- and the centre art graduates from a closed book to an open one to
+# a mortarboard.  (burst points, centre icon, ribbon, wreath, crown)
+ART = [
+    (0,  "book", 0, 0, 0),   # Iron      round disc, nothing else
+    (0,  "book", 0, 0, 0),   # Bronze    hex plate
+    (6,  "book", 0, 0, 0),   # Silver    + 6-point burst
+    (8,  "open", 1, 0, 0),   # Gold      + 8-point burst, ribbon
+    (12, "open", 1, 0, 0),   # Platinum  + 12-point burst
+    (12, "open", 1, 1, 0),   # Diamond   + laurel wreath
+    (16, "open", 1, 1, 1),   # Ascendant + crown
+    (16, "cap",  1, 1, 1),   # Immortal  + mortarboard
+    (20, "cap",  1, 1, 1),   # Radiant   + 20-point burst and halo
+]
+
+
+def _pts(n, ro, ri=None, cx=32, cy=30, rot=-90):
+    """Points for an n-gon (ri=None) or an n-pointed star, as an SVG string."""
+    count = n if ri is None else n * 2
+    out = []
+    for k in range(count):
+        r = ro if (ri is None or k % 2 == 0) else ri
+        a = math.radians(rot + 360 * k / count)
+        out.append(f"{cx + r * math.cos(a):.1f},{cy + r * math.sin(a):.1f}")
+    return " ".join(out)
+
+
+def _mix(hex_c, other, t):
+    """Blend a #rrggbb toward another, for the metal highlight and shadow."""
+    c = [int(hex_c[i:i + 2], 16) for i in (1, 3, 5)]
+    o = [int(other[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(round(a + (b - a) * t) for a, b in zip(c, o))
+
+
+def badge_art():
+    """Everything the badge macro needs to draw all nine tiers."""
+    out = []
+    for i, (_, name, color) in enumerate(RANKS):
+        burst, icon, ribbon, wreath, crown = ART[i]
+        out.append({
+            "tier": i, "name": name, "color": color,
+            "lite": _mix(color, "#ffffff", .55), "dark": _mix(color, "#000000", .42),
+            "disc": i == 0, "plate": _pts(6, 20),
+            "burst": _pts(burst, 29, 19) if burst else None,
+            "icon": icon, "ribbon": bool(ribbon), "wreath": bool(wreath),
+            "crown": bool(crown), "halo": i == len(RANKS) - 1, "roman": ROMAN[i],
+        })
+    return out
+
+
 # Validated with the dataviz palette validator, both modes, all checks pass.
 DONE_COLOR, UPCOMING_COLOR, OVERDUE_COLOR = "#0ca30c", "#2a78d6", "#d03b3b"
 RADIUS = 52
@@ -217,7 +271,7 @@ def index(token):
         percent=round(100 * len(done) / total) if total else 0,
         segments=_donut(len(done), len(soon) + len(later), len(overdue)),
         circumference=f"{CIRCUMFERENCE:.2f}", radius=RADIUS,
-        xp=xp, rank=rank, ranks=RANKS,
+        xp=xp, rank=rank, ranks=RANKS, art=badge_art(),
         next_up=(soon or later or [None])[0],
         days=days, raw_schedule=json.dumps(schedule, indent=2))
 
@@ -257,6 +311,7 @@ def schedule(token):
 
 
 PAGE = """<!doctype html>
+<meta charset="utf-8">
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Assignments</title>
 <style>
@@ -293,13 +348,15 @@ PAGE = """<!doctype html>
  .badge{flex:none;display:block;overflow:visible;
         animation:glow var(--d) ease-in-out infinite}
  .badge .shine{fill:#fff;opacity:0;animation:shine var(--s) linear infinite}
- .badge .ring{transform-box:view-box;transform-origin:50% 49%;
-              animation:spin var(--r) linear infinite}
+ .badge .halo{transform-box:view-box;transform-origin:50% 44.7%;
+              stroke-dasharray:3 7;animation:spin var(--r) linear infinite}
+ .badge .num{font:700 9px -apple-system,system-ui,sans-serif;fill:#fff;
+             letter-spacing:.03em}
  @keyframes glow{0%,100%{filter:drop-shadow(0 0 calc(var(--g) * .3) var(--c))}
                  50%{filter:drop-shadow(0 0 var(--g) var(--c))}}
  @keyframes shine{0%{opacity:0;transform:translateX(0)}
                   10%,32%{opacity:.5}
-                  42%,100%{opacity:0;transform:translateX(74px)}}
+                  42%,100%{opacity:0;transform:translateX(96px)}}
  @keyframes spin{to{transform:rotate(360deg)}}
  @keyframes hue{to{filter:hue-rotate(360deg)}}
  /* one look per tier: dead metal at the bottom, everything at the top */
@@ -312,7 +369,7 @@ PAGE = """<!doctype html>
  @media (prefers-reduced-motion:reduce){.badge,.badge *{animation:none}}
 
  .ladder{display:grid;gap:.15rem}
- .lad{display:flex;align-items:center;gap:.6rem;padding:.3rem .35rem;
+ .lad{display:flex;align-items:center;gap:.7rem;padding:.15rem .35rem;
       border-radius:.5rem;font-size:.88rem}
  .lad.now{background:var(--bg);outline:1px solid var(--line)}
  .lad b{font-weight:600}
@@ -374,7 +431,18 @@ PAGE = """<!doctype html>
 </style>
 
 <svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs>
-  <clipPath id="hx"><polygon points="24,1 45,13 45,38 24,51 3,38 3,13"></polygon></clipPath>
+  {% for a in art %}
+  <linearGradient id="g{{ a.tier }}" x1="0" y1="0" x2=".3" y2="1">
+    <stop offset="0" stop-color="{{ a.lite }}"></stop>
+    <stop offset=".42" stop-color="{{ a.color }}"></stop>
+    <stop offset="1" stop-color="{{ a.dark }}"></stop>
+  </linearGradient>
+  <clipPath id="sh{{ a.tier }}">
+    {% if a.burst %}<polygon points="{{ a.burst }}"></polygon>{% endif %}
+    {% if a.disc %}<circle cx="32" cy="30" r="21"></circle>
+    {% else %}<polygon points="{{ a.plate }}"></polygon>{% endif %}
+  </clipPath>
+  {% endfor %}
 </defs></svg>
 
 <h1>Assignments</h1>
@@ -409,41 +477,104 @@ PAGE = """<!doctype html>
   </div>
 </div>
 
-{% macro badge(color, chevrons, size, tier) %}
-<svg class="badge t{{ tier }}" width="{{ size }}" height="{{ (size * 1.1)|round|int }}"
-     viewBox="0 0 48 53" style="--c:{{ color }}" aria-hidden="true">
-  <polygon points="24,1 45,13 45,38 24,51 3,38 3,13" fill="{{ color }}"
-           fill-opacity="0.14" stroke="{{ color }}" stroke-width="2"
-           stroke-linejoin="round"></polygon>
-  <polygon class="core" points="24,13 34,19 34,31 24,37 14,31 14,19" fill="{{ color }}"></polygon>
-  <polygon points="24,17 30,20.5 30,27.5 24,31 18,27.5 18,20.5"
-           fill="#fff" fill-opacity="0.28"></polygon>
-  {% for n in range(chevrons) %}
-  <path d="M17 {{ 41 + n * 3.4 }} l7 -3 l7 3" fill="none" stroke="{{ color }}"
-        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
-        opacity="{{ 1 - n * 0.22 }}"></path>
-  {% endfor %}
-  {% if tier >= 6 %}
-  <circle class="ring" cx="24" cy="26" r="23.5" fill="none" stroke="{{ color }}"
-          stroke-width="1.2" stroke-dasharray="2 6" opacity="0.75"></circle>
+{% macro badge(size, tier) %}
+{% set a = art[tier] %}
+<svg class="badge t{{ tier }}" width="{{ size }}" height="{{ (size * 1.19)|round|int }}"
+     viewBox="0 -4 64 76" style="--c:{{ a.color }}" role="img"
+     aria-label="{{ a.name }}, rank {{ tier + 1 }} of {{ art|length }}">
+
+  {% if a.halo %}<circle class="halo" cx="32" cy="30" r="31" fill="none"
+       stroke="{{ a.lite }}" stroke-width="1.6" opacity=".85"></circle>{% endif %}
+
+  {% if a.burst %}
+  <polygon points="{{ a.burst }}" fill="url(#g{{ tier }})" stroke="{{ a.dark }}"
+           stroke-width="1" stroke-linejoin="round" opacity=".92"></polygon>
   {% endif %}
-  <g clip-path="url(#hx)">
-    <polygon class="shine" points="-17,-4 -7,-4 -13,57 -23,57"></polygon>
+
+  {% if a.disc %}
+  <circle cx="32" cy="30" r="21" fill="url(#g{{ tier }})" stroke="{{ a.dark }}"
+          stroke-width="2"></circle>
+  <circle cx="32" cy="30" r="17" fill="none" stroke="{{ a.dark }}"
+          stroke-width="1" opacity=".7"></circle>
+  {% else %}
+  <polygon points="{{ a.plate }}" fill="url(#g{{ tier }})" stroke="{{ a.dark }}"
+           stroke-width="2" stroke-linejoin="round"></polygon>
+  <polygon points="{{ a.plate }}" fill="none" stroke="{{ a.lite }}" stroke-width="1"
+           stroke-linejoin="round" opacity=".55"
+           transform="translate(32 30) scale(.82) translate(-32 -30)"></polygon>
+  {% endif %}
+
+  {% if a.wreath %}
+  {% for side in [-1, 1] %}
+  <g transform="translate(32 32) scale({{ side }} 1) translate(-32 -32)">
+    <path d="M18 55 C8 50 5 40 8 31" fill="none" stroke="{{ a.lite }}"
+          stroke-width="2.4" stroke-linecap="round"></path>
+    {% for n in range(4) %}
+    <ellipse cx="{{ 6.5 + n * 2.6 }}" cy="{{ 51.5 - n * 6.5 }}" rx="4" ry="2.1"
+             fill="{{ a.lite }}" stroke="{{ a.dark }}" stroke-width=".7"
+             transform="rotate({{ -34 + n * 20 }} {{ 6.5 + n * 2.6 }} {{ 51.5 - n * 6.5 }})"></ellipse>
+    {% endfor %}
+  </g>
+  {% endfor %}
+  {% endif %}
+
+  {% if a.crown %}
+  <path d="M18 1 L25 10 L32 -3 L39 10 L46 1 L44 16 L20 16 Z"
+        fill="url(#g{{ tier }})" stroke="{{ a.dark }}" stroke-width="1.3"
+        stroke-linejoin="round"></path>
+  <circle cx="32" cy="-1.5" r="2.4" fill="{{ a.lite }}" stroke="{{ a.dark }}"
+          stroke-width=".9"></circle>
+  {% endif %}
+
+  <g fill="{{ a.dark }}" stroke="{{ a.dark }}" stroke-width="1.4"
+     stroke-linejoin="round" stroke-linecap="round">
+  {% if a.icon == 'book' %}
+    <rect x="22" y="20" width="20" height="16" rx="2" fill="{{ a.dark }}"></rect>
+    <rect x="22" y="20" width="6" height="16" rx="2" fill="{{ a.lite }}"
+          stroke="none" opacity=".55"></rect>
+    <path d="M31 24.5 h7 M31 28 h7 M31 31.5 h4.5" fill="none" stroke="{{ a.lite }}"
+          stroke-width="1.5" stroke-linecap="round" opacity=".9"></path>
+  {% elif a.icon == 'open' %}
+    <path d="M32 25 C29 22 25.5 21 22 21 L22 33 C25.5 33 29 34 32 36.5
+             C35 34 38.5 33 42 33 L42 21 C38.5 21 35 22 32 25 Z"
+          fill="{{ a.dark }}"></path>
+    <path d="M32 25 v11.5" fill="none" stroke="{{ a.lite }}" stroke-width="1.4"></path>
+  {% else %}
+    <path d="M32 19 L45 25 L32 31 L19 25 Z" fill="{{ a.dark }}"></path>
+    <path d="M25.5 27.5 V33 C25.5 35.4 38.5 35.4 38.5 33 V27.5"
+          fill="none" stroke="{{ a.dark }}" stroke-width="2"></path>
+    <path d="M45 25 V32" fill="none" stroke="{{ a.lite }}" stroke-width="1.3"></path>
+    <circle cx="45" cy="33.4" r="1.6" fill="{{ a.lite }}" stroke="none"></circle>
+  {% endif %}
+  </g>
+
+  {% if a.ribbon %}
+  <path d="M9 50 L32 55 L55 50 L52 61 L32 66 L12 61 Z" fill="{{ a.dark }}"
+        stroke="{{ a.color }}" stroke-width="1.2" stroke-linejoin="round"
+        opacity=".95"></path>
+  {% endif %}
+
+  <rect x="24" y="53" width="16" height="13" rx="2.4" fill="#141414"
+        stroke="{{ a.color }}" stroke-width="1.4"></rect>
+  <text class="num" x="32" y="60" text-anchor="middle"
+        dominant-baseline="central">{{ a.roman }}</text>
+
+  <g clip-path="url(#sh{{ tier }})">
+    <polygon class="shine" points="-22,-6 -10,-6 -18,78 -30,78"></polygon>
   </g>
 </svg>
 {% endmacro %}
 
 <div class=panel>
   <div class=score>
-    {{ badge(rank.color, rank.chevrons, 62, rank.tier) }}
+    {{ badge(66, rank.tier) }}
     <div class=who>
       <span class="rk" style="color:{{ rank.color }}">{{ rank.name }}</span>
       <span class=xp>{{ xp }} XP</span>
     </div>
     {% if rank.next_name %}
     <div class=nxt>
-      {{ badge(rank.next_color, rank.chevrons if rank.tier % 3 < 2 else rank.chevrons + 1, 30,
-                rank.tier + 1) }}
+      {{ badge(32, rank.tier + 1) }}
       <span>{{ rank.to_next }} XP<br>to {{ rank.next_name }}</span>
     </div>
     {% endif %}
@@ -455,7 +586,7 @@ PAGE = """<!doctype html>
     <div class=ladder>
       {% for floor, name, color in ranks %}
       <div class="lad {{ 'now' if loop.index0 == rank.tier }}">
-        {{ badge(color, 1 + loop.index0 // 3, 34, loop.index0) }}
+        {{ badge(46, loop.index0) }}
         <b style="color:{{ color }}">{{ name }}</b>
         <s>{{ floor }}{{ '+' if loop.last else '–' ~ (ranks[loop.index][0] - 1) }} XP</s>
       </div>
