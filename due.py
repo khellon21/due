@@ -5,6 +5,7 @@ Run `python due.py tick` from cron every five minutes.
 import json
 import pathlib
 import sqlite3
+import sys
 import urllib.request
 import time
 from datetime import datetime, timedelta
@@ -235,3 +236,71 @@ def send(cfg, headline, body, priority, tags, action_url=None):
         data=body.encode("utf-8"), headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=15) as r:
         r.read()
+
+
+def tick(cfg=None, db=None, now=None, sender=None):
+    """One scheduling pass. Returns the (uid, stage) pairs actually sent.
+
+    `db`, `now` and `sender` are injectable so the whole pass is testable
+    against a fixed clock with no network and no files.
+    """
+    cfg = cfg if cfg is not None else load_config()
+    tz = ZoneInfo(cfg["timezone"])
+    now = now or datetime.now(tz)
+    owns_db = db is None
+    db = db if db is not None else connect()
+    sender = sender or (lambda payload: send(cfg, *payload[:4], action_url=payload[4]))
+
+    if owns_db:
+        try:
+            sync(db, parse_ics(fetch_ics(cfg), tz))
+        except Exception as e:
+            print(f"feed refresh failed, using cached data: {e}", file=sys.stderr)
+
+    fired = []
+    for row in pending(db):
+        due_dt = datetime.fromisoformat(row["due"])
+        hu = heads_up_at(due_dt, cfg["work_schedule"], now.date(), cfg["heads_up_hour"])
+        stage = current_stage(now, due_dt, hu,
+                              cfg["escalation_hours"], cfg["repeat_minutes"])
+        if stage is None:
+            continue
+
+        if stage == REPEAT:
+            if in_quiet_hours(now.hour, cfg["quiet_hours"]):
+                continue
+            last = row["last_repeat_at"]
+            # Two minutes of slack absorbs five-minute cron jitter, so the
+            # interval does not drift out to 35 minutes.
+            gap = timedelta(minutes=cfg["repeat_minutes"] - 2)
+            if last and now - datetime.fromisoformat(last) < gap:
+                continue
+        elif db.execute("SELECT 1 FROM sent WHERE uid=? AND stage=?",
+                        (row["uid"], stage)).fetchone():
+            continue
+
+        payload = (*notification(stage, row["title"], due_dt, now),
+                   done_url(cfg, row["uid"]))
+        try:
+            sender(payload)
+        except Exception as e:
+            print(f"send failed for {row['uid']} {stage}: {e}", file=sys.stderr)
+            continue  # not recorded, so the next tick retries
+
+        if stage == REPEAT:
+            db.execute("UPDATE assignments SET last_repeat_at=? WHERE uid=?",
+                       (now.isoformat(), row["uid"]))
+        else:
+            db.execute("INSERT INTO sent (uid, stage, sent_at) VALUES (?,?,?)",
+                       (row["uid"], stage, now.isoformat()))
+        db.commit()
+        fired.append((row["uid"], stage))
+    return fired
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "tick":
+        for uid, stage in tick():
+            print(f"sent {stage} for {uid}")
+    else:
+        sys.exit("usage: python due.py tick")

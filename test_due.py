@@ -279,6 +279,61 @@ def test_send_folds_the_headline_and_builds_the_done_action():
     assert captured["body"] == body.encode("utf-8"), "the body must keep full UTF-8"
 
 
+def _cfg():
+    cfg = due.load_config(due.HERE / "config.example.json")
+    cfg["work_schedule"] = dict(FREE)
+    return cfg
+
+
+def _armed(now_due=DUE):
+    db = due.connect(":memory:")
+    due.sync(db, [("u1", "Chapter 2 Quiz", now_due)])
+    return db
+
+
+def test_tick_sends_each_one_shot_stage_exactly_once():
+    db, sent = _armed(), []
+    at = datetime(2026, 9, 9, 20, 0, tzinfo=TZ)
+    assert due.tick(_cfg(), db, at, sent.append) == [("u1", due.HEADS_UP)]
+    assert due.tick(_cfg(), db, at + timedelta(minutes=5), sent.append) == []
+    assert due.tick(_cfg(), db, DUE - timedelta(hours=5), sent.append) == [("u1", "T5H")]
+    assert len(sent) == 2
+
+
+def test_tick_repeats_every_28_minutes_and_respects_quiet_hours():
+    db, sent = _armed(), []
+    t = DUE - timedelta(minutes=30)
+    assert due.tick(_cfg(), db, t, sent.append) == [("u1", due.REPEAT)]
+    assert due.tick(_cfg(), db, t + timedelta(minutes=5), sent.append) == [], "too soon"
+    assert due.tick(_cfg(), db, t + timedelta(minutes=29), sent.append) == [("u1", due.REPEAT)]
+    # 00:00-08:00 is quiet, so nothing lands overnight...
+    assert due.tick(_cfg(), db, DUE + timedelta(hours=3), sent.append) == []
+    # ...and it resumes at 08:00.
+    assert due.tick(_cfg(), db, DUE + timedelta(hours=9), sent.append) == [("u1", due.REPEAT)]
+
+
+def test_tick_is_silent_once_marked_done():
+    db, sent = _armed(), []
+    due.mark_done(db, "u1", DUE - timedelta(days=1))
+    for at in (DUE - timedelta(hours=5), DUE, DUE + timedelta(days=1)):
+        assert due.tick(_cfg(), db, at, sent.append) == []
+    assert sent == []
+
+
+def test_tick_does_not_record_a_failed_send():
+    db = _armed()
+
+    def boom(*a, **kw):
+        raise OSError("ntfy unreachable")
+
+    at = datetime(2026, 9, 9, 20, 0, tzinfo=TZ)
+    assert due.tick(_cfg(), db, at, boom) == []
+    assert db.execute("SELECT COUNT(*) FROM sent").fetchone()[0] == 0
+    # The next tick retries it.
+    sent = []
+    assert due.tick(_cfg(), db, at + timedelta(minutes=5), sent.append) == [("u1", due.HEADS_UP)]
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
