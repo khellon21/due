@@ -8,6 +8,7 @@ import sqlite3
 import urllib.request
 import time
 from datetime import datetime, timedelta
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from icalendar import Calendar
@@ -185,3 +186,52 @@ def pending(db):
     return db.execute(
         "SELECT * FROM assignments WHERE active=1 AND done_at IS NULL ORDER BY due"
     ).fetchall()
+
+
+PRIORITY = {HEADS_UP: 3, "T5H": 3, "T2H": 4, "T1H": 5, REPEAT: 5}
+TAGS = {HEADS_UP: "books", "T5H": "hourglass", "T2H": "hourglass_flowing_sand",
+        "T1H": "warning", REPEAT: "rotating_light"}
+
+
+def format_when(dt):
+    """'Thu Sep 10, 11:59 PM'. Built from fields because strftime's %-I
+    padding flag is not portable across libc implementations."""
+    return f"{dt:%a %b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M %p}"
+
+
+def notification(stage, title, due_dt, now):
+    """(headline, body, priority, tags) for one notification."""
+    if stage == HEADS_UP:
+        days = (due_dt.date() - now.date()).days
+        word = "tomorrow" if days == 1 else f"in {days} days"
+        head = f"Due {word}: {title}"
+    elif stage == REPEAT:
+        head = f"{'OVERDUE' if now >= due_dt else 'DUE SOON'}: {title}"
+    else:
+        hours = int(stage[1:-1])
+        head = f"{hours} hour{'s' if hours != 1 else ''} left: {title}"
+    return head, format_when(due_dt), PRIORITY.get(stage, 4), TAGS.get(stage, "hourglass")
+
+
+def done_url(cfg, uid):
+    return f"{cfg['base_url']}/t/{cfg['web_token']}/done/{quote(uid, safe='')}"
+
+
+def send(cfg, headline, body, priority, tags, action_url=None):
+    """POST one notification to ntfy.
+
+    ntfy headers must be ASCII, so the headline is folded; the body carries
+    full UTF-8. Assignment titles from this feed are ASCII in practice.
+    """
+    headers = {
+        "Title": headline.encode("ascii", "replace").decode("ascii"),
+        "Priority": str(priority),
+        "Tags": tags,
+    }
+    if action_url:
+        headers["Actions"] = f"http, Done, {action_url}, method=POST, clear=true"
+    req = urllib.request.Request(
+        f"{cfg['ntfy_server'].rstrip('/')}/{cfg['ntfy_topic']}",
+        data=body.encode("utf-8"), headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        r.read()

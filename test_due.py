@@ -198,6 +198,51 @@ def test_done_survives_a_moved_deadline():
     assert due.pending(db) == [], "and it stays out of the pending list"
 
 
+def test_notification_text():
+    now = datetime(2026, 9, 9, 20, 0, tzinfo=TZ)
+    head, body, prio, _ = due.notification(due.HEADS_UP, "Chapter 2 Quiz", DUE, now)
+    assert head == "Due tomorrow: Chapter 2 Quiz", head
+    assert body == "Thu Sep 10, 11:59 PM", body
+    assert prio == 3
+
+    # Heads-up pushed two days back by a work shift must not say "tomorrow".
+    head, _, _, _ = due.notification(due.HEADS_UP, "Chapter 2 Quiz", DUE,
+                                     datetime(2026, 9, 8, 20, 0, tzinfo=TZ))
+    assert head == "Due in 2 days: Chapter 2 Quiz", head
+
+    head, _, prio, _ = due.notification("T1H", "Chapter 2 Quiz", DUE,
+                                        DUE - timedelta(hours=1))
+    assert head == "1 hour left: Chapter 2 Quiz", head
+    assert prio == 5
+
+    head, _, _, _ = due.notification("T5H", "Chapter 2 Quiz", DUE, DUE - timedelta(hours=5))
+    assert head == "5 hours left: Chapter 2 Quiz", head
+
+    head, _, _, _ = due.notification(due.REPEAT, "Chapter 2 Quiz", DUE,
+                                     DUE - timedelta(minutes=30))
+    assert head == "DUE SOON: Chapter 2 Quiz", head
+
+    head, _, _, _ = due.notification(due.REPEAT, "Chapter 2 Quiz", DUE,
+                                     DUE + timedelta(hours=9))
+    assert head == "OVERDUE: Chapter 2 Quiz", head
+
+
+def test_notification_time_format_is_platform_independent():
+    # Built from fields rather than strftime %-I, which is not portable.
+    afternoon = datetime(2026, 9, 17, 16, 28, tzinfo=TZ)
+    _, body, _, _ = due.notification("T2H", "Unit I Assignment", afternoon, afternoon)
+    assert body == "Thu Sep 17, 4:28 PM", body
+    midnight = datetime(2026, 9, 17, 0, 5, tzinfo=TZ)
+    _, body, _, _ = due.notification("T2H", "x", midnight, midnight)
+    assert body == "Thu Sep 17, 12:05 AM", body
+
+
+def test_done_url():
+    cfg = {"base_url": "http://1.2.3.4:8080", "web_token": "abc123"}
+    assert due.done_url(cfg, "_bb.GradableItem-_1436930_1") == \
+        "http://1.2.3.4:8080/t/abc123/done/_bb.GradableItem-_1436930_1"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
