@@ -14,7 +14,7 @@ import due
 
 app = Flask(__name__)
 
-SHIFT = re.compile(r"\d{2}:\d{2}-\d{2}:\d{2}")
+SHIFT = re.compile(r"([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d")
 
 
 def validate_schedule(raw):
