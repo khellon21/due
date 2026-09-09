@@ -1,6 +1,6 @@
 """Self-check for due.py.  Run: python test_due.py"""
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import due
@@ -80,6 +80,62 @@ def test_config_roundtrip():
     assert cfg["timezone"] == "America/New_York"
     assert set(cfg["work_schedule"]) == set(due.DAY_NAMES)
     assert cfg["escalation_hours"] == [5, 2, 1]
+
+
+DUE = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)  # Thursday, a real feed item
+FREE = {d: [] for d in due.DAY_NAMES}
+WED_SHIFT = dict(FREE, Wed=["16:00-21:00"])
+WED_AND_TUE_SHIFT = dict(FREE, Wed=["16:00-21:00"], Tue=["16:00-21:00"])
+
+
+def test_heads_up_lands_the_evening_before_when_free():
+    got = due.heads_up_at(DUE, FREE, date(2026, 9, 8), 20)
+    assert got == datetime(2026, 9, 9, 20, 0, tzinfo=TZ), got
+
+
+def test_heads_up_skips_a_whole_work_day():
+    got = due.heads_up_at(DUE, WED_SHIFT, date(2026, 9, 8), 20)
+    assert got == datetime(2026, 9, 8, 20, 0, tzinfo=TZ), got
+
+
+def test_heads_up_falls_back_when_every_day_is_a_work_day():
+    got = due.heads_up_at(DUE, WED_AND_TUE_SHIFT, date(2026, 9, 8), 20)
+    assert got == datetime(2026, 9, 9, 20, 0, tzinfo=TZ), "never stay silent"
+
+
+def test_stage_boundaries():
+    hu = datetime(2026, 9, 9, 20, 0, tzinfo=TZ)
+    cases = [
+        (hu - timedelta(seconds=1), None),
+        (hu, due.HEADS_UP),
+        (DUE - timedelta(hours=5, seconds=1), due.HEADS_UP),
+        (DUE - timedelta(hours=5), "T5H"),
+        (DUE - timedelta(hours=2, seconds=1), "T5H"),
+        (DUE - timedelta(hours=2), "T2H"),
+        (DUE - timedelta(hours=1, seconds=1), "T2H"),
+        (DUE - timedelta(hours=1), "T1H"),
+        (DUE - timedelta(minutes=30, seconds=1), "T1H"),
+        (DUE - timedelta(minutes=30), due.REPEAT),
+        (DUE, due.REPEAT),
+        (DUE + timedelta(days=3), due.REPEAT),
+    ]
+    for now, expected in cases:
+        assert due.current_stage(now, DUE, hu) == expected, f"at {now} expected {expected}"
+
+
+def test_heads_up_skipped_when_it_would_overlap_the_escalation():
+    early = datetime(2026, 9, 11, 0, 30, tzinfo=TZ)   # due just after midnight
+    hu = datetime(2026, 9, 10, 20, 0, tzinfo=TZ)      # 8pm is later than due-5h
+    assert due.current_stage(datetime(2026, 9, 10, 20, 0, tzinfo=TZ), early, hu) == "T5H"
+
+
+def test_quiet_hours():
+    assert due.in_quiet_hours(2, [0, 8]) is True
+    assert due.in_quiet_hours(8, [0, 8]) is False
+    assert due.in_quiet_hours(23, [0, 8]) is False
+    assert due.in_quiet_hours(23, [22, 6]) is True, "must handle a wrapping window"
+    assert due.in_quiet_hours(3, [22, 6]) is True
+    assert due.in_quiet_hours(12, [22, 6]) is False
 
 
 def main():

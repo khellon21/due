@@ -6,7 +6,7 @@ import json
 import pathlib
 import urllib.request
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from icalendar import Calendar
@@ -70,3 +70,52 @@ def parse_ics(data, tz):
             dt = dt.replace(tzinfo=tz)
         out.append((str(ev["UID"]), str(ev["SUMMARY"]), dt.astimezone(tz)))
     return out
+
+
+HEADS_UP = "HEADS_UP"
+REPEAT = "REPEAT"
+
+
+def heads_up_at(due_dt, work_schedule, today, hour):
+    """The latest non-work day strictly before the due date, at `hour`:00.
+
+    Walks back from the day before the deadline toward today and takes the
+    first free day it finds -- the latest free evening. A shift blocks the
+    whole day, not just its hours.
+
+    If every day in that range is a work day, falls back to the day before
+    the deadline. Khellon works three days a week so this should not fire;
+    it exists so the system is never silent.
+    """
+    day = due_dt.date() - timedelta(days=1)
+    while day >= today:
+        if not is_work_day(day, work_schedule):
+            return datetime(day.year, day.month, day.day, hour, tzinfo=due_dt.tzinfo)
+        day -= timedelta(days=1)
+    fallback = due_dt.date() - timedelta(days=1)
+    return datetime(fallback.year, fallback.month, fallback.day, hour,
+                    tzinfo=due_dt.tzinfo)
+
+
+def current_stage(now, due_dt, heads_up, escalation_hours=(5, 2, 1), repeat_minutes=30):
+    """Which single stage is active at `now`, or None if nothing is yet due.
+
+    The windows partition the timeline, so a stage missed while the VM was
+    down is never sent late and stale -- the stage that is current right now
+    is sent instead.
+    """
+    if now >= due_dt - timedelta(minutes=repeat_minutes):
+        return REPEAT
+    for hours in sorted(escalation_hours):          # nearest deadline first
+        if now >= due_dt - timedelta(hours=hours):
+            return f"T{hours}H"
+    first_escalation = due_dt - timedelta(hours=max(escalation_hours))
+    if heads_up <= now and heads_up < first_escalation:
+        return HEADS_UP
+    return None
+
+
+def in_quiet_hours(hour, quiet):
+    """`quiet` is [start_hour, end_hour); handles a window that wraps midnight."""
+    lo, hi = quiet
+    return lo <= hour < hi if lo < hi else (hour >= lo or hour < hi)
