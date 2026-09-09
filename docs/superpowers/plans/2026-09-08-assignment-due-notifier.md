@@ -1335,6 +1335,22 @@ Then set `base_url` to `http://<your VM public IP>:8080` and fill in
 .venv/bin/python due.py tick
 ```
 
+## First run: clear the backlog BEFORE enabling cron
+
+Anything already past its deadline is treated as still outstanding, so the
+first tick will notify you about all of it at once — at the time of writing
+that is 12 assignments, at urgent priority, repeating every 30 minutes until
+you mark them done.
+
+So do this in order:
+
+1. Start the web page (next section) and open it on your phone.
+2. Tap **Done** on everything you have already handed in.
+3. Only then enable cron, below.
+
+If you skip this you will get a wall of notifications and then have to clear
+them from the page anyway.
+
 ## Cron
 
 ```bash
@@ -1414,15 +1430,40 @@ install Tailscale on the VM and your phone, set `base_url` to the VM's
 Tailscale name, and remove the two firewall rules above. No domain needed.
 ````
 
-- [ ] **Step 2: Verify the deployment instructions against a real run**
+- [ ] **Step 2: Verify against a real run, WITHOUT sending anything**
+
+A first tick against the live feed fires a notification for every assignment
+already past its deadline — 12 of them at the time of writing, all at urgent
+priority. `config.example.json` ships a placeholder `ntfy_topic`, and ntfy
+topics are public, so a verification run must not be allowed to publish.
+
+Point ntfy at an unroutable address first, so the feed fetch, the database sync
+and the stage machine all run for real while every send fails locally:
+
+```bash
+cp -n config.example.json config.json
+python3 - <<'EOF'
+import json, pathlib
+p = pathlib.Path("config.json")
+cfg = json.loads(p.read_text())
+cfg["ntfy_server"] = "http://127.0.0.1:9"   # discard port, nothing leaves the box
+p.write_text(json.dumps(cfg, indent=2))
+EOF
+```
 
 Run: `.venv/bin/python test_due.py && .venv/bin/python due.py tick`
-Expected: all tests pass; the tick downloads the feed, populates `due.db`, and prints the notifications it sent (probably none, unless something is due soon).
+Expected: `30/30 passed`, then one `send failed for ... Connection refused` line
+per overdue assignment on stderr and no `sent` output. Those failures are the
+correct behaviour — a failed send is not recorded, so the next tick retries.
 
-Then confirm the database was populated:
+Then confirm the feed really was parsed and stored:
 
 Run: `sqlite3 due.db "SELECT COUNT(*) FROM assignments;"`
 Expected: `49`
+
+Then delete the scratch state so the VM starts clean:
+
+Run: `rm -f due.db learn.ics config.json`
 
 - [ ] **Step 3: Commit**
 
