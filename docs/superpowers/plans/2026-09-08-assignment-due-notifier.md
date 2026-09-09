@@ -734,6 +734,42 @@ def test_notification_time_format_is_platform_independent():
     assert body == "Thu Sep 17, 12:05 AM", body
 
 
+def test_send_folds_the_headline_and_builds_the_done_action():
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return b""
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+
+    def spy(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
+        captured["body"] = req.data
+        return FakeResponse()
+
+    real_urlopen = due.urllib.request.urlopen
+    due.urllib.request.urlopen = spy
+    try:
+        cfg = {"ntfy_server": "https://ntfy.sh/", "ntfy_topic": "secret-topic"}
+        body = "Thu Sep 10, 11:59 PM \u2014 don\u2019t forget"
+        due.send(cfg, "1 hour left: Chapter 2\u2019s Quiz \u2013 Unit 1", body, 5,
+                 "warning", action_url="http://1.2.3.4:8080/t/tok/done/u1")
+    finally:
+        due.urllib.request.urlopen = real_urlopen
+
+    assert captured["url"] == "https://ntfy.sh/secret-topic", "trailing slash is stripped"
+    assert captured["headers"]["title"] == "1 hour left: Chapter 2?s Quiz ? Unit 1"
+    assert captured["headers"]["priority"] == "5"
+    assert captured["headers"]["tags"] == "warning"
+    assert captured["headers"]["actions"] == (
+        "http, Done, http://1.2.3.4:8080/t/tok/done/u1, method=POST, clear=true")
+    assert captured["body"] == body.encode("utf-8"), "the body must keep full UTF-8"
+
+
 def test_done_url():
     cfg = {"base_url": "http://1.2.3.4:8080", "web_token": "abc123"}
     assert due.done_url(cfg, "_bb.GradableItem-_1436930_1") == \
@@ -805,7 +841,7 @@ pass through unchanged, which it does because `_`, `.` and `-` are unreserved.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python test_due.py`
-Expected: `19/19 passed`
+Expected: `20/20 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -975,7 +1011,7 @@ lambda unpacks it.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python test_due.py`
-Expected: `23/23 passed`
+Expected: `24/24 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1184,7 +1220,7 @@ cp -n config.example.json config.json
 ```
 
 Run: `.venv/bin/python test_due.py`
-Expected: `26/26 passed`
+Expected: `27/27 passed`
 
 - [ ] **Step 5: Commit**
 
