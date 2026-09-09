@@ -755,8 +755,8 @@ def test_send_folds_the_headline_and_builds_the_done_action():
     due.urllib.request.urlopen = spy
     try:
         cfg = {"ntfy_server": "https://ntfy.sh/", "ntfy_topic": "secret-topic"}
-        body = "Thu Sep 10, 11:59 PM \u2014 don\u2019t forget"
-        due.send(cfg, "1 hour left: Chapter 2\u2019s Quiz \u2013 Unit 1", body, 5,
+        body = "Thu Sep 10, 11:59 PM — don't forget"
+        due.send(cfg, "1 hour left: Chapter 2’s Quiz – Unit 1", body, 5,
                  "warning", action_url="http://1.2.3.4:8080/t/tok/done/u1")
     finally:
         due.urllib.request.urlopen = real_urlopen
