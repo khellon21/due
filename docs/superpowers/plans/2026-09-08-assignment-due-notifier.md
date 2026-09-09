@@ -371,7 +371,8 @@ This is the heart of the system. Every notification time comes from these three 
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `test_due.py` (extend the datetime import to include `timedelta`):
+Add to `test_due.py` (extend the datetime import to include `timedelta`; the
+tick tests below also need `io` and `contextlib`):
 
 ```python
 DUE = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)  # Thursday, a real feed item
@@ -904,6 +905,34 @@ def test_tick_repeats_every_28_minutes_and_respects_quiet_hours():
     assert due.tick(_cfg(), db, DUE + timedelta(hours=9), sent.append) == [("u1", due.REPEAT)]
 
 
+def test_quiet_hours_do_not_consume_the_repeat_slot():
+    db, sent = _armed(), []
+    t = DUE - timedelta(minutes=30)
+    assert due.tick(_cfg(), db, t, sent.append) == [("u1", due.REPEAT)]
+    stamp = db.execute("SELECT last_repeat_at FROM assignments WHERE uid='u1'").fetchone()[0]
+    assert due.tick(_cfg(), db, DUE + timedelta(hours=3), sent.append) == [], "quiet hours send nothing"
+    after = db.execute("SELECT last_repeat_at FROM assignments WHERE uid='u1'").fetchone()[0]
+    assert after == stamp, "a suppressed repeat must not reset the pacing timer"
+
+def test_tick_survives_a_feed_refresh_failure():
+    db, sent = _armed(), []
+    real_connect, real_fetch = due.connect, due.fetch_ics
+
+    def boom(*args, **kwargs):
+        raise OSError("feed unreachable")
+
+    due.connect = lambda *a, **k: db
+    due.fetch_ics = boom
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            fired = due.tick(_cfg(), None, datetime(2026, 9, 9, 20, 0, tzinfo=TZ), sent.append)
+    finally:
+        due.connect, due.fetch_ics = real_connect, real_fetch
+    assert fired == [("u1", due.HEADS_UP)], "a dead feed must not stop notifications"
+    assert "feed refresh failed" in stderr.getvalue(), "and it must say so on stderr"
+
+
 def test_tick_is_silent_once_marked_done():
     db, sent = _armed(), []
     due.mark_done(db, "u1", DUE - timedelta(days=1))
@@ -1011,7 +1040,7 @@ lambda unpacks it.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python test_due.py`
-Expected: `24/24 passed`
+Expected: `26/26 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1220,7 +1249,7 @@ cp -n config.example.json config.json
 ```
 
 Run: `.venv/bin/python test_due.py`
-Expected: `27/27 passed`
+Expected: `29/29 passed`
 
 - [ ] **Step 5: Commit**
 
