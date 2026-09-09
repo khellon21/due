@@ -4,6 +4,7 @@ Run `python due.py tick` from cron every five minutes.
 """
 import json
 import pathlib
+import sqlite3
 import urllib.request
 import time
 from datetime import datetime, timedelta
@@ -119,3 +120,68 @@ def in_quiet_hours(hour, quiet):
     """`quiet` is [start_hour, end_hour); handles a window that wraps midnight."""
     lo, hi = quiet
     return lo <= hour < hi if lo < hi else (hour >= lo or hour < hi)
+
+
+DB_PATH = HERE / "due.db"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS assignments (
+  uid            TEXT PRIMARY KEY,
+  title          TEXT NOT NULL,
+  due            TEXT NOT NULL,
+  active         INTEGER NOT NULL DEFAULT 1,
+  done_at        TEXT,
+  last_repeat_at TEXT
+);
+CREATE TABLE IF NOT EXISTS sent (
+  uid     TEXT NOT NULL,
+  stage   TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  PRIMARY KEY (uid, stage)
+);
+"""
+
+
+def connect(path=None):
+    db = sqlite3.connect(str(path or DB_PATH))
+    db.row_factory = sqlite3.Row
+    db.executescript(SCHEMA)
+    return db
+
+
+def sync(db, events):
+    """Reconcile the database against the feed."""
+    seen = set()
+    for uid, title, due_dt in events:
+        seen.add(uid)
+        due_s = due_dt.isoformat()
+        row = db.execute("SELECT due FROM assignments WHERE uid=?", (uid,)).fetchone()
+        if row is None:
+            db.execute("INSERT INTO assignments (uid, title, due) VALUES (?,?,?)",
+                       (uid, title, due_s))
+        elif row["due"] != due_s:
+            # Deadline moved: re-arm every stage against the new one.
+            db.execute("UPDATE assignments SET title=?, due=?, active=1, "
+                       "last_repeat_at=NULL WHERE uid=?", (title, due_s, uid))
+            db.execute("DELETE FROM sent WHERE uid=?", (uid,))
+        else:
+            db.execute("UPDATE assignments SET title=?, active=1 WHERE uid=?", (title, uid))
+    if seen:
+        # Guarded: an empty list means the fetch failed, not that the semester
+        # ended. Deactivating everything there would silence the system.
+        placeholders = ",".join("?" * len(seen))
+        db.execute(f"UPDATE assignments SET active=0 WHERE uid NOT IN ({placeholders})",
+                   tuple(seen))
+    db.commit()
+
+
+def mark_done(db, uid, when):
+    db.execute("UPDATE assignments SET done_at=? WHERE uid=?",
+               (when.isoformat() if when else None, uid))
+    db.commit()
+
+
+def pending(db):
+    return db.execute(
+        "SELECT * FROM assignments WHERE active=1 AND done_at IS NULL ORDER BY due"
+    ).fetchall()

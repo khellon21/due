@@ -138,6 +138,53 @@ def test_quiet_hours():
     assert due.in_quiet_hours(12, [22, 6]) is False
 
 
+def test_sync_inserts_updates_and_deactivates():
+    db = due.connect(":memory:")
+    a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    due.sync(db, [("u1", "Quiz 1", a), ("u2", "Quiz 2", a)])
+    assert len(due.pending(db)) == 2
+
+    # u2 vanishes from the feed -> deactivated, not deleted
+    due.sync(db, [("u1", "Quiz 1 renamed", a)])
+    rows = {r["uid"]: r for r in db.execute("SELECT * FROM assignments")}
+    assert rows["u1"]["title"] == "Quiz 1 renamed"
+    assert rows["u2"]["active"] == 0
+    assert len(due.pending(db)) == 1
+
+
+def test_changed_due_date_rearms_the_schedule():
+    db = due.connect(":memory:")
+    a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    due.sync(db, [("u1", "Quiz", a)])
+    db.execute("INSERT INTO sent (uid, stage, sent_at) VALUES ('u1','T5H','x')")
+    db.execute("UPDATE assignments SET last_repeat_at='x' WHERE uid='u1'")
+    db.commit()
+
+    due.sync(db, [("u1", "Quiz", a + timedelta(days=7))])
+    assert db.execute("SELECT COUNT(*) FROM sent").fetchone()[0] == 0, "sent rows cleared"
+    row = db.execute("SELECT * FROM assignments WHERE uid='u1'").fetchone()
+    assert row["last_repeat_at"] is None
+    assert row["due"] == (a + timedelta(days=7)).isoformat()
+
+
+def test_empty_feed_does_not_deactivate_everything():
+    db = due.connect(":memory:")
+    a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    due.sync(db, [("u1", "Quiz", a)])
+    due.sync(db, [])
+    assert len(due.pending(db)) == 1, "a failed or empty parse must not wipe the schedule"
+
+
+def test_mark_done_and_undo():
+    db = due.connect(":memory:")
+    a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    due.sync(db, [("u1", "Quiz", a)])
+    due.mark_done(db, "u1", a)
+    assert due.pending(db) == []
+    due.mark_done(db, "u1", None)
+    assert len(due.pending(db)) == 1
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
