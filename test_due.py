@@ -426,6 +426,66 @@ def test_page_shows_assignments_overdue_by_more_than_three_days():
     assert "13 days overdue" in body
 
 
+def test_points_reward_early_and_penalise_late():
+    at = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    assert web.points_for(at, None) == 0, "nothing is scored until it is done"
+    assert web.points_for(at, at - timedelta(hours=2)) == 10, "same day, on time"
+    assert web.points_for(at, at - timedelta(days=3)) == 16, "10 + 3 days x 2"
+    assert web.points_for(at, at - timedelta(days=90)) == 50, "early bonus caps at +40"
+    assert web.points_for(at, at + timedelta(minutes=1)) == -5, "any lateness costs a day"
+    assert web.points_for(at, at + timedelta(days=3)) == -15
+    assert web.points_for(at, at + timedelta(days=99)) == -30, "late penalty has a floor"
+
+
+def test_preexisting_backlog_is_never_scored():
+    # Clearing a semester's imported backlog must not open the scoreboard deep
+    # in the negative -- the notifier was not watching those deadlines.
+    at = datetime(2026, 8, 27, 23, 59, tzinfo=TZ)
+    first_seen = datetime(2026, 9, 9, 4, 48, tzinfo=TZ)   # tracking began later
+    done_now = datetime(2026, 9, 9, 12, 0, tzinfo=TZ)
+    assert web.points_for(at, done_now, first_seen) == 0, "backlog is unscored"
+    assert web.points_for(at, done_now) == -30, "without first_seen it still penalises"
+    # An assignment seen BEFORE its deadline scores normally.
+    later = datetime(2026, 9, 20, 23, 59, tzinfo=TZ)
+    assert web.points_for(later, later - timedelta(days=2), first_seen) == 14
+
+
+def test_rank_thresholds():
+    assert web.rank_for(0)[0] == "Freshman"
+    assert web.rank_for(-40)[0] == "Freshman", "a negative score cannot rank below the floor"
+    assert web.rank_for(99)[0] == "Freshman"
+    assert web.rank_for(100)[0] == "Sophomore"
+    assert web.rank_for(1000)[:2] == ("Dean's List", None), "top rank has nothing after it"
+    name, nxt, to_next, pct = web.rank_for(175)
+    assert (name, nxt, to_next) == ("Sophomore", "Junior", 75)
+    assert pct == 50, "175 is halfway from 100 to 250"
+
+
+def test_donut_segments_cover_the_circle_with_gaps():
+    segs = web._donut(3, 5, 2)
+    assert [s["label"] for s in segs] == ["Done", "Upcoming", "Overdue"]
+    assert [s["count"] for s in segs] == [3, 5, 2]
+    assert [s["pct"] for s in segs] == [30, 50, 20]
+    assert web._donut(0, 5, 0)[0]["label"] == "Upcoming", "empty categories are dropped"
+    drawn = sum(float(s["dash"].split()[0]) for s in segs)
+    assert web.CIRCUMFERENCE - 12 < drawn < web.CIRCUMFERENCE, "segments fill the ring minus gaps"
+
+
+def test_schedule_form_builds_and_validates():
+    form = {"on_Mon": "on", "start_Mon": "22:00", "end_Mon": "06:00",
+            "on_Sat": "on", "start_Sat": "10:00", "end_Sat": "18:00"}
+    got = web.schedule_from_form(form)
+    assert got["Mon"] == ["22:00-06:00"], "overnight shift survives the form"
+    assert got["Sat"] == ["10:00-18:00"]
+    assert got["Tue"] == [] and got["Sun"] == [], "unticked days are free"
+    try:
+        web.schedule_from_form({"on_Wed": "on", "start_Wed": "", "end_Wed": ""})
+    except ValueError as e:
+        assert "no hours" in str(e), e
+    else:
+        raise AssertionError("a ticked day with no hours must be rejected")
+
+
 def test_web_requires_the_token():
     client = web.app.test_client()
     assert client.get("/").status_code == 404

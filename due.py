@@ -8,7 +8,9 @@ import sqlite3
 import sys
 import urllib.request
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -131,6 +133,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   uid            TEXT PRIMARY KEY,
   title          TEXT NOT NULL,
   due            TEXT NOT NULL,
+  first_seen     TEXT,
   active         INTEGER NOT NULL DEFAULT 1,
   done_at        TEXT,
   last_repeat_at TEXT
@@ -148,6 +151,14 @@ def connect(path=None):
     db = sqlite3.connect(str(path or DB_PATH))
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    if "first_seen" not in {c[1] for c in db.execute("PRAGMA table_info(assignments)")}:
+        # Existing database from before scoring. Backfill now, so everything
+        # already overdue at this moment counts as pre-existing backlog and is
+        # never penalised -- the notifier was not watching it yet.
+        db.execute("ALTER TABLE assignments ADD COLUMN first_seen TEXT")
+        db.execute("UPDATE assignments SET first_seen=?",
+                   (datetime.now(UTC).isoformat(),))
+        db.commit()
     return db
 
 
@@ -159,8 +170,9 @@ def sync(db, events):
         due_s = due_dt.isoformat()
         row = db.execute("SELECT due FROM assignments WHERE uid=?", (uid,)).fetchone()
         if row is None:
-            db.execute("INSERT INTO assignments (uid, title, due) VALUES (?,?,?)",
-                       (uid, title, due_s))
+            db.execute("INSERT INTO assignments (uid, title, due, first_seen) "
+                       "VALUES (?,?,?,?)",
+                       (uid, title, due_s, datetime.now(UTC).isoformat()))
         elif row["due"] != due_s:
             # Deadline moved: re-arm every stage against the new one.
             db.execute("UPDATE assignments SET title=?, due=?, active=1, "
