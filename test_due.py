@@ -266,7 +266,8 @@ def test_send_folds_the_headline_and_builds_the_done_action():
     real_urlopen = due.urllib.request.urlopen
     due.urllib.request.urlopen = spy
     try:
-        cfg = {"ntfy_server": "https://ntfy.sh/", "ntfy_topic": "secret-topic"}
+        cfg = {"ntfy_server": "https://ntfy.sh/", "ntfy_topic": "secret-topic",
+               "base_url": "http://1.2.3.4:8080", "web_token": "tok"}
         body = "Thu Sep 10, 11:59 PM — don't forget"
         due.send(cfg, "1 hour left: Chapter 2’s Quiz – Unit 1", body, 5,
                  "warning", action_url="http://1.2.3.4:8080/t/tok/done/u1")
@@ -279,6 +280,8 @@ def test_send_folds_the_headline_and_builds_the_done_action():
     assert captured["headers"]["tags"] == "warning"
     assert captured["headers"]["actions"] == (
         "http, Done, http://1.2.3.4:8080/t/tok/done/u1, method=POST, clear=true")
+    assert captured["headers"]["click"] == "http://1.2.3.4:8080/t/tok/", \
+        "tapping the notification body must open the page"
     assert captured["body"] == body.encode("utf-8"), "the body must keep full UTF-8"
 
 
@@ -389,6 +392,38 @@ def test_validate_schedule_rejects_bad_input():
             assert hint.lower() in str(e).lower(), f"{raw}: unhelpful message {e!r}"
         else:
             raise AssertionError(f"accepted bad schedule: {raw}")
+
+
+def test_countdown_wording():
+    now = datetime(2026, 9, 9, 12, 0, tzinfo=TZ)
+    cases = [
+        (now + timedelta(minutes=45), "in 45 minutes"),
+        (now + timedelta(hours=22), "in 22 hours"),
+        (now + timedelta(days=5), "in 5 days"),
+        (now + timedelta(days=1), "in 1 day"),
+        (now - timedelta(days=2), "2 days overdue"),
+        (now - timedelta(hours=3), "3 hours overdue"),
+        (now - timedelta(seconds=30), "1 minute overdue"),
+    ]
+    for at, expected in cases:
+        assert web.countdown(at, now) == expected, f"{at}: got {web.countdown(at, now)!r}"
+
+
+def test_page_shows_assignments_overdue_by_more_than_three_days():
+    # Regression: the page used to filter to due > now-3d, which hid long-overdue
+    # assignments while they kept notifying every 30 minutes -- no way to stop them.
+    db = due.connect(":memory:")
+    stale = datetime.now(TZ) - timedelta(days=13)
+    due.sync(db, [("old-1", "Syllabee Activity", stale)])
+    real_connect = due.connect
+    due.connect = lambda *a, **k: db
+    try:
+        cfg = due.load_config()
+        body = web.app.test_client().get(f"/t/{cfg['web_token']}/").data.decode()
+    finally:
+        due.connect = real_connect
+    assert "Syllabee Activity" in body, "a long-overdue assignment must still be listed"
+    assert "13 days overdue" in body
 
 
 def test_web_requires_the_token():

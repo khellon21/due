@@ -214,8 +214,12 @@ def notification(stage, title, due_dt, now):
     return head, format_when(due_dt), PRIORITY.get(stage, 4), TAGS.get(stage, "hourglass")
 
 
+def page_url(cfg):
+    return f"{cfg['base_url']}/t/{cfg['web_token']}/"
+
+
 def done_url(cfg, uid):
-    return f"{cfg['base_url']}/t/{cfg['web_token']}/done/{quote(uid, safe='')}"
+    return f"{page_url(cfg)}done/{quote(uid, safe='')}"
 
 
 def send(cfg, headline, body, priority, tags, action_url=None):
@@ -228,6 +232,8 @@ def send(cfg, headline, body, priority, tags, action_url=None):
         "Title": headline.encode("ascii", "replace").decode("ascii"),
         "Priority": str(priority),
         "Tags": tags,
+        # Tapping the notification body opens the page; the Done button stays.
+        "Click": page_url(cfg),
     }
     if action_url:
         headers["Actions"] = f"http, Done, {action_url}, method=POST, clear=true"
