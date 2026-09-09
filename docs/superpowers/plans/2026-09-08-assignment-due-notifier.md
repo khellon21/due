@@ -564,6 +564,19 @@ def test_empty_feed_does_not_deactivate_everything():
     assert len(due.pending(db)) == 1, "a failed or empty parse must not wipe the schedule"
 
 
+def test_done_survives_a_moved_deadline():
+    db = due.connect(":memory:")
+    a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    due.sync(db, [("u1", "Quiz", a)])
+    due.mark_done(db, "u1", a)
+    moved = a + timedelta(days=7)
+    due.sync(db, [("u1", "Quiz", moved)])
+    row = db.execute("SELECT * FROM assignments WHERE uid='u1'").fetchone()
+    assert row["done_at"] is not None, "a moved deadline must not resurrect a done assignment"
+    assert row["due"] == moved.isoformat(), "the new deadline is still stored"
+    assert due.pending(db) == [], "and it stays out of the pending list"
+
+
 def test_mark_done_and_undo():
     db = due.connect(":memory:")
     a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
@@ -652,7 +665,7 @@ def pending(db):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python test_due.py`
-Expected: `15/15 passed`
+Expected: `16/16 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -792,7 +805,7 @@ pass through unchanged, which it does because `_`, `.` and `-` are unreserved.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python test_due.py`
-Expected: `18/18 passed`
+Expected: `19/19 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -962,7 +975,7 @@ lambda unpacks it.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python test_due.py`
-Expected: `22/22 passed`
+Expected: `23/23 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1171,7 +1184,7 @@ cp -n config.example.json config.json
 ```
 
 Run: `.venv/bin/python test_due.py`
-Expected: `25/25 passed`
+Expected: `26/26 passed`
 
 - [ ] **Step 5: Commit**
 
