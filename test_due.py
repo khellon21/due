@@ -185,6 +185,19 @@ def test_mark_done_and_undo():
     assert len(due.pending(db)) == 1
 
 
+def test_done_survives_a_moved_deadline():
+    db = due.connect(":memory:")
+    a = datetime(2026, 9, 10, 23, 59, tzinfo=TZ)
+    due.sync(db, [("u1", "Quiz", a)])
+    due.mark_done(db, "u1", a)
+    moved = a + timedelta(days=7)
+    due.sync(db, [("u1", "Quiz", moved)])
+    row = db.execute("SELECT * FROM assignments WHERE uid='u1'").fetchone()
+    assert row["done_at"] is not None, "a moved deadline must not resurrect a done assignment"
+    assert row["due"] == moved.isoformat(), "the new deadline is still stored"
+    assert due.pending(db) == [], "and it stays out of the pending list"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
