@@ -654,6 +654,7 @@ git commit -m "feat: sqlite store and feed reconciliation"
 **Interfaces:**
 - Consumes: `due.HEADS_UP`, `due.REPEAT`
 - Produces:
+  - `due.format_when(dt: datetime) -> str`
   - `due.notification(stage, title, due_dt, now) -> tuple[str, str, int, str]` — `(headline, body, priority, tags)`
   - `due.done_url(cfg, uid) -> str`
   - `due.send(cfg, headline, body, priority, tags, action_url=None) -> None`
@@ -723,7 +724,7 @@ TAGS = {HEADS_UP: "books", "T5H": "hourglass", "T2H": "hourglass_flowing_sand",
         "T1H": "warning", REPEAT: "rotating_light"}
 
 
-def _when(dt):
+def format_when(dt):
     """'Thu Sep 10, 11:59 PM'. Built from fields because strftime's %-I
     padding flag is not portable across libc implementations."""
     return f"{dt:%a %b} {dt.day}, {dt.hour % 12 or 12}:{dt:%M %p}"
@@ -740,7 +741,7 @@ def notification(stage, title, due_dt, now):
     else:
         hours = int(stage[1:-1])
         head = f"{hours} hour{'s' if hours != 1 else ''} left: {title}"
-    return head, _when(due_dt), PRIORITY.get(stage, 4), TAGS.get(stage, "hourglass")
+    return head, format_when(due_dt), PRIORITY.get(stage, 4), TAGS.get(stage, "hourglass")
 
 
 def done_url(cfg, uid):
@@ -961,7 +962,7 @@ git commit -m "feat: tick orchestration with retry on send failure"
 - Modify: `test_due.py`
 
 **Interfaces:**
-- Consumes: `due.load_config`, `due.save_config`, `due.connect`, `due.mark_done`, `due.DAY_NAMES`, `due._when`
+- Consumes: `due.load_config`, `due.save_config`, `due.connect`, `due.mark_done`, `due.DAY_NAMES`, `due.format_when`
 - Produces:
   - `web.app: Flask`
   - `web.validate_schedule(raw: str) -> dict` — raises `ValueError` with a human-readable message
@@ -1016,7 +1017,7 @@ Access control is the token in the URL path. Anything else 404s.
 import hmac
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, redirect, render_template_string, request
@@ -1060,14 +1061,14 @@ def index(token):
     cfg = due.load_config()
     tz = ZoneInfo(cfg["timezone"])
     db = due.connect()
-    cutoff = (datetime.now(tz) - due.timedelta(days=3)).isoformat()
+    cutoff = (datetime.now(tz) - timedelta(days=3)).isoformat()
     rows = db.execute(
         "SELECT * FROM assignments WHERE active=1 AND due > ? "
         "ORDER BY done_at IS NOT NULL, due", (cutoff,)).fetchall()
     items = [{
         "uid": r["uid"],
         "title": r["title"],
-        "when": due._when(datetime.fromisoformat(r["due"])),
+        "when": due.format_when(datetime.fromisoformat(r["due"])),
         "done": r["done_at"] is not None,
     } for r in rows]
     return render_template_string(
@@ -1141,9 +1142,6 @@ PAGE = """<!doctype html>
 </form>
 """
 ```
-
-`due.timedelta` is used in `index`; it is already imported into `due`'s
-namespace by Task 3, so no extra import is needed here.
 
 - [ ] **Step 4: Run test to verify it passes**
 
