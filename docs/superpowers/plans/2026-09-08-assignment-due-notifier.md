@@ -1071,6 +1071,7 @@ Add to `test_due.py` (add `import web` beside `import due`):
 def test_validate_schedule_accepts_good_input():
     got = web.validate_schedule('{"Mon": ["16:00-21:00"], "Tue": []}')
     assert got == {"Mon": ["16:00-21:00"], "Tue": []}, got
+    assert web.validate_schedule('{"Sat": ["22:00-06:00"]}') == {"Sat": ["22:00-06:00"]}
 
 
 def test_validate_schedule_rejects_bad_input():
@@ -1080,6 +1081,8 @@ def test_validate_schedule_rejects_bad_input():
         ('{"Monday": []}', "unknown day"),
         ('{"Mon": "16:00-21:00"}', "list"),
         ('{"Mon": ["4pm to 9pm"]}', "HH:MM-HH:MM"),
+        ('{"Mon": ["99:99-99:99"]}', "HH:MM-HH:MM"),
+        ('{"Mon": ["24:00-25:00"]}', "HH:MM-HH:MM"),
     ]
     for raw, hint in bad:
         try:
@@ -1094,6 +1097,16 @@ def test_web_requires_the_token():
     client = web.app.test_client()
     assert client.get("/").status_code == 404
     assert client.get("/t/wrong-token/").status_code == 404
+
+def test_web_guards_every_mutating_route():
+    # index is covered above; these three CHANGE state, so a dropped guard here
+    # is the serious one. Each must 404 before touching the db or the config.
+    client = web.app.test_client()
+    for path in ("/t/wrong-token/done/u1",
+                 "/t/wrong-token/undone/u1",
+                 "/t/wrong-token/schedule"):
+        assert client.post(path).status_code == 404, f"unguarded: {path}"
+
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1122,7 +1135,7 @@ import due
 
 app = Flask(__name__)
 
-SHIFT = re.compile(r"\d{2}:\d{2}-\d{2}:\d{2}")
+SHIFT = re.compile(r"([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d")
 
 
 def validate_schedule(raw):
@@ -1249,7 +1262,7 @@ cp -n config.example.json config.json
 ```
 
 Run: `.venv/bin/python test_due.py`
-Expected: `29/29 passed`
+Expected: `30/30 passed`
 
 - [ ] **Step 5: Commit**
 
