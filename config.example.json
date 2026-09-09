@@ -1,0 +1,21 @@
+{
+  "ics_url": "https://edisonohio.blackboard.com/webapps/calendar/calendarFeed/3815adaf6ea845268b8dcc627c422d88/learn.ics",
+  "timezone": "America/New_York",
+  "ntfy_server": "https://ntfy.sh",
+  "ntfy_topic": "CHANGE-ME-to-a-long-random-string",
+  "base_url": "http://CHANGE-ME-vm-ip:8080",
+  "web_token": "CHANGE-ME-32-hex-characters",
+  "heads_up_hour": 20,
+  "quiet_hours": [0, 8],
+  "repeat_minutes": 30,
+  "escalation_hours": [5, 2, 1],
+  "work_schedule": {
+    "Mon": [],
+    "Tue": [],
+    "Wed": [],
+    "Thu": [],
+    "Fri": [],
+    "Sat": [],
+    "Sun": []
+  }
+}

@@ -1,0 +1,6 @@
+config.json
+due.db
+learn.ics
+tick.log
+.venv/
+__pycache__/
