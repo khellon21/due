@@ -1437,7 +1437,19 @@ already past its deadline — 12 of them at the time of writing, all at urgent
 priority. `config.example.json` ships a placeholder `ntfy_topic`, and ntfy
 topics are public, so a verification run must not be allowed to publish.
 
-Point ntfy at an unroutable address first, so the feed fetch, the database sync
+On the VM this runs as written. On a macOS dev box the python.org build ships
+no CA bundle (`ssl.get_default_verify_paths().cafile` is `None`), so `urllib`
+cannot verify the Blackboard certificate and the fetch fails — Ubuntu 24.04's
+Python reads `/etc/ssl/certs` and is unaffected. Seed the cache with `curl`
+first so the parse, the sync and the stage machine are still exercised for real
+and only the TLS handshake is skipped:
+
+```bash
+curl -sL "$(python3 -c 'import json;print(json.load(open("config.example.json"))["ics_url"])')" -o learn.ics
+ls -l learn.ics    # expect ~15 KB
+```
+
+Point ntfy at an unroutable address next, so the feed fetch, the database sync
 and the stage machine all run for real while every send fails locally:
 
 ```bash
