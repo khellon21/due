@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import due
+import web
 
 TZ = ZoneInfo("America/New_York")
 
@@ -363,6 +364,34 @@ def test_tick_survives_a_feed_refresh_failure():
         due.connect, due.fetch_ics = real_connect, real_fetch
     assert fired == [("u1", due.HEADS_UP)], "a dead feed must not stop notifications"
     assert "feed refresh failed" in stderr.getvalue(), "and it must say so on stderr"
+
+
+def test_validate_schedule_accepts_good_input():
+    got = web.validate_schedule('{"Mon": ["16:00-21:00"], "Tue": []}')
+    assert got == {"Mon": ["16:00-21:00"], "Tue": []}, got
+
+
+def test_validate_schedule_rejects_bad_input():
+    bad = [
+        ("not json at all", "json"),
+        ('["Mon"]', "object"),
+        ('{"Monday": []}', "unknown day"),
+        ('{"Mon": "16:00-21:00"}', "list"),
+        ('{"Mon": ["4pm to 9pm"]}', "HH:MM-HH:MM"),
+    ]
+    for raw, hint in bad:
+        try:
+            web.validate_schedule(raw)
+        except ValueError as e:
+            assert hint.lower() in str(e).lower(), f"{raw}: unhelpful message {e!r}"
+        else:
+            raise AssertionError(f"accepted bad schedule: {raw}")
+
+
+def test_web_requires_the_token():
+    client = web.app.test_client()
+    assert client.get("/").status_code == 404
+    assert client.get("/t/wrong-token/").status_code == 404
 
 
 def main():
